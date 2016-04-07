@@ -2,22 +2,23 @@ package main
 
 import (
 	"flag"
-	"net/http"
-	"os"
 	"fmt"
 	"io"
+	"math"
+	"net/http"
+	"os"
 	"sync/atomic"
 	"time"
-	"math"
 )
+
 func bignum2str(num float64) string {
-    for _, suffix := range []string{" ","K","M","G","T","P","E","Z"} {
-        if math.Abs(num) < 1000.0 {
-            return fmt.Sprintf("%9.3f%s", num, suffix)
+	for _, suffix := range []string{" ", "K", "M", "G", "T", "P", "E", "Z"} {
+		if math.Abs(num) < 1000.0 {
+			return fmt.Sprintf("%9.3f%s", num, suffix)
 		}
-        num /= 1000.0
+		num /= 1000.0
 	}
-    return fmt.Sprintf("%9.3f%s", num, "Y")
+	return fmt.Sprintf("%9.3f%s", num, "Y")
 }
 
 func download(url string, counter *uint64, chunk_size int) {
@@ -45,7 +46,7 @@ func main() {
 	interval_flag := flag.Float64("interval", 1, "Report interval in seconds")
 	buffsize_flag := flag.Int("buffsize", 500*1000, "Size of download buffers in bytes")
 	url_flag := flag.String("url", "", "HTTP URL to download (REQUIRED)")
-	flag.Parse() 
+	flag.Parse()
 	routines := *routines_flag
 	interval := *interval_flag
 	buffsize := *buffsize_flag
@@ -62,8 +63,8 @@ func main() {
 	}
 	fmt.Printf("Time    \tDownload speed (bit/s)\n")
 	for {
-		time.Sleep(time.Duration(interval*1e9)*time.Nanosecond)
-		fmt.Printf("%s\t%s\n", time.Now().Format("15:04:05"), bignum2str(8*float64(counter - prev)/interval))
+		time.Sleep(time.Duration(interval*1e9) * time.Nanosecond)
+		fmt.Printf("%s\t%s\n", time.Now().Format("15:04:05"), bignum2str(8*float64(counter-prev)/interval))
 		prev = counter
 	}
 
