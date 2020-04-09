@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math"
 	"net/http"
 	"os"
@@ -14,9 +13,14 @@ import (
 	flag "github.com/spf13/pflag"
 )
 
+const (
+	maxChunkSize = 8192
+)
+
 var (
 	version     string
 	byteCounter uint64
+	reqsCounter uint64
 )
 
 func bignum2str(num float64) string {
@@ -30,19 +34,28 @@ func bignum2str(num float64) string {
 }
 
 func downloadLoop(url string, chunkSize int64, byteRate float64) {
+	httpClient := http.Client{
+		Transport: &http.Transport{
+			MaxIdleConns:        1,
+			MaxIdleConnsPerHost: 1,
+			IdleConnTimeout:     60 * time.Second,
+		},
+	}
+	buffer := make([]byte, chunkSize)
 	rateBucket := ratelimit.NewBucketWithRate(byteRate, chunkSize)
 	rateBucket.TakeAvailable(chunkSize)
 	for {
-		resp, err := http.Get(url)
+		resp, err := httpClient.Get(url)
 		if err != nil {
 			panic(err)
 		}
+		atomic.AddUint64(&reqsCounter, 1)
 		rateLimitedBody := ratelimit.Reader(resp.Body, rateBucket)
 		for {
-			bytesCnt, err := io.CopyN(ioutil.Discard, rateLimitedBody, chunkSize)
+			bytesCnt, err := rateLimitedBody.Read(buffer)
 			if err == io.EOF {
-				resp.Body.Close()
 				atomic.AddUint64(&byteCounter, uint64(bytesCnt))
+				resp.Body.Close()
 				break
 			}
 			if err != nil {
@@ -65,7 +78,9 @@ func main() {
 	)
 	argInterval := flag.Float64("interval", 1, "Report interval in seconds")
 	argChunksPerInterval := flag.Float64(
-		"chunks-per-interval", 4, "Number of download chunks per report interval",
+		"min-chunks-per-interval",
+		4,
+		"Minimum number of download chunks per report interval",
 	)
 	argURL := flag.String("url", "", "HTTP URL to download (REQUIRED)")
 	flag.Parse()
@@ -85,6 +100,9 @@ func main() {
 		fmt.Printf("Number of bytes per interval is too low, bitrate may be wrong")
 		chunkSize = 10
 	}
+	if chunkSize > maxChunkSize {
+		chunkSize = maxChunkSize
+	}
 	url := *argURL
 	if url == "" {
 		fmt.Println("No HTTP URL specified")
@@ -94,21 +112,25 @@ func main() {
 	for i := 0; i < clients; i++ {
 		go downloadLoop(url, chunkSize, byteRate)
 	}
-	fmt.Printf("Time    \tDownload speed (bit/s)\n")
-	var prevByteCnt uint64
+	fmt.Printf("Time    \tDownload speed (bit/s)\tRequests per second\n")
+	var prevByteCnt, prevReqsCnt uint64
 	prevTime := time.Now()
 	for {
 		time.Sleep(time.Duration(interval*1e9) * time.Nanosecond)
 		nowTime := time.Now()
-		currByteCnt := byteCounter
+		currByteCnt := atomic.LoadUint64(&byteCounter)
+		currReqsCnt := atomic.LoadUint64(&reqsCounter)
 		intervalNanosec := float64(nowTime.Sub(prevTime).Nanoseconds())
 		bytesPerNanosec := float64(currByteCnt-prevByteCnt) / intervalNanosec
+		reqsPerNanosec := float64(currReqsCnt-prevReqsCnt) / intervalNanosec
 		fmt.Printf(
-			"%s\t%s\n",
+			"%s\t%s\t%s\n",
 			nowTime.Format("15:04:05"),
 			bignum2str(bytesPerNanosec*8e9),
+			bignum2str(reqsPerNanosec*1e9),
 		)
 		prevTime = nowTime
 		prevByteCnt = currByteCnt
+		prevReqsCnt = currReqsCnt
 	}
 }
