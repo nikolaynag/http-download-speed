@@ -1,10 +1,17 @@
 # http-download-speed
 
-A simple tool for simulating high-bandwidth multiple client HTTP requests load.
-After parsing command line arguments, it launches requested number of
-goroutines which in infinite loop request given URL and download response body.
-During this download process, a shared counter is incremented and total bitrate
-calculated and printed to stdout in simple human readable table format.
+A simple tool for simulating a load when many clients are downloading some big
+file via HTTP with same fixed bitrate.
+
+After parsing command line arguments, given number of parallel clients are
+launched using goroutines. Each client sends requests to given URL and downloads
+response in infinite loop. Download is made with specified bitrate limit.
+During this process, shared counters of downloaded bytes and started requests
+are incremented.
+
+In the main goroutine shared counters are measured at regular intervals and
+total download bitrate and requests rate are calculated and printed to stdout
+in simple human readable format.
 
 ## Quick start
 
@@ -24,24 +31,24 @@ make run
 ```
 Usage example:
 ```
-$ ./http-download-speed --clients 4 --bitrate 10 --url http://google.com
-Time    	Download speed (bit/s)
-23:16:03	   39.920K
-23:16:04	   39.883K
-23:16:05	   39.909K
-23:16:06	   39.902K
-23:16:07	   39.902K
+build/bin$ ./http-download-speed --clients 4 --bitrate 10 --url http://google.com
+Time    	Download speed (bit/s)	Requests per second
+11:12:12	   39.907K	    3.997
+11:12:13	   39.895K	    0.000
+11:12:14	   39.900K	    0.000
+11:12:15	   39.898K	    0.000
+11:12:16	   39.895K	    0.000
 ^C
 $
 ```
 Take a look at possible arguments with `--help`:
 ```
-Usage of http-download-speed:
-      --help                        Just print help message and exit
-      --version                     Just print version and exit
-      --bitrate float               Max download birate in kbit/s for single goroutine (default 100)
-      --clients int                 Number of parallel download clients (default 1)
-      --interval float              Report interval in seconds (default 1)
-      --chunks-per-interval float   Number of download chunks per report interval (default 4)
-      --url string                  HTTP URL to download (REQUIRED)
+Usage of ./http-download-speed:
+      --help                            Just print help message and exit
+      --version                         Just print version and exit
+      --bitrate float                   Max download birate in kbit/s for single goroutine (default 100)
+      --clients int                     Number of parallel download clients (default 1)
+      --interval float                  Report interval in seconds (default 1)
+      --min-chunks-per-interval float   Minimum number of download chunks per report interval (default 4)
+      --url string                      HTTP URL to download (REQUIRED)
 ```
