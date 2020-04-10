@@ -33,7 +33,7 @@ func bignum2str(num float64) string {
 	return fmt.Sprintf("%9.3f%s", num, "Y")
 }
 
-func downloadLoop(url string, chunkSize int64, byteRate float64) {
+func downloadLoop(url string, chunkSize int64, byteRate float64, reqsPerSec float64) {
 	httpClient := http.Client{
 		Transport: &http.Transport{
 			MaxIdleConns:        1,
@@ -42,15 +42,18 @@ func downloadLoop(url string, chunkSize int64, byteRate float64) {
 		},
 	}
 	buffer := make([]byte, chunkSize)
-	rateBucket := ratelimit.NewBucketWithRate(byteRate, chunkSize)
-	rateBucket.TakeAvailable(chunkSize)
+	byteRateBucket := ratelimit.NewBucketWithRate(byteRate, chunkSize)
+	byteRateBucket.TakeAvailable(chunkSize)
+	reqsRateBucket := ratelimit.NewBucketWithRate(reqsPerSec, 10)
+	reqsRateBucket.TakeAvailable(10)
 	for {
+		reqsRateBucket.Wait(1)
 		resp, err := httpClient.Get(url)
 		if err != nil {
 			panic(err)
 		}
 		atomic.AddUint64(&reqsCounter, 1)
-		rateLimitedBody := ratelimit.Reader(resp.Body, rateBucket)
+		rateLimitedBody := ratelimit.Reader(resp.Body, byteRateBucket)
 		for {
 			bytesCnt, err := rateLimitedBody.Read(buffer)
 			if err == io.EOF {
@@ -71,7 +74,10 @@ func main() {
 	argHelp := flag.Bool("help", false, "Just print help message and exit")
 	argVersion := flag.Bool("version", false, "Just print version and exit")
 	argBitrate := flag.Float64(
-		"bitrate", 100, "Max download birate in kbit/s for single goroutine",
+		"bitrate", 100, "Max download birate in kbit/s for single client",
+	)
+	argReqsPerSec := flag.Float64(
+		"rps", 1, "Max requests per second for single client",
 	)
 	argClients := flag.Int(
 		"clients", 1, "Number of parallel download clients",
@@ -95,6 +101,7 @@ func main() {
 	clients := *argClients
 	interval := *argInterval
 	byteRate := *argBitrate * 1e3 / 8.0
+	reqsPerSec := *argReqsPerSec
 	chunkSize := int64(byteRate * interval / (*argChunksPerInterval))
 	if chunkSize <= 10 {
 		fmt.Printf("Number of bytes per interval is too low, bitrate may be wrong")
@@ -110,7 +117,7 @@ func main() {
 		os.Exit(1)
 	}
 	for i := 0; i < clients; i++ {
-		go downloadLoop(url, chunkSize, byteRate)
+		go downloadLoop(url, chunkSize, byteRate, reqsPerSec)
 	}
 	fmt.Printf("Time    \tDownload speed (bit/s)\tRequests per second\n")
 	var prevByteCnt, prevReqsCnt uint64
