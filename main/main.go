@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/juju/ratelimit"
-	flag "github.com/spf13/pflag"
+	"github.com/spf13/pflag"
 )
 
 const (
@@ -33,7 +33,12 @@ func bignum2str(num float64) string {
 	return fmt.Sprintf("%9.3f%s", num, "Y")
 }
 
-func downloadLoop(url string, chunkSize int64, byteRate float64, reqsPerSec float64) {
+func downloadLoop(
+	url string,
+	chunkSize int64,
+	byteRate float64,
+	reqsRateBucket *ratelimit.Bucket,
+) {
 	httpClient := http.Client{
 		Transport: &http.Transport{
 			MaxIdleConns:        1,
@@ -44,8 +49,6 @@ func downloadLoop(url string, chunkSize int64, byteRate float64, reqsPerSec floa
 	buffer := make([]byte, chunkSize)
 	byteRateBucket := ratelimit.NewBucketWithRate(byteRate, chunkSize)
 	byteRateBucket.TakeAvailable(chunkSize)
-	reqsRateBucket := ratelimit.NewBucketWithRate(reqsPerSec, 10)
-	reqsRateBucket.TakeAvailable(10)
 	for {
 		reqsRateBucket.Wait(1)
 		resp, err := httpClient.Get(url)
@@ -70,28 +73,32 @@ func downloadLoop(url string, chunkSize int64, byteRate float64, reqsPerSec floa
 }
 
 func main() {
-	flag.CommandLine.SortFlags = false
-	argHelp := flag.Bool("help", false, "Just print help message and exit")
-	argVersion := flag.Bool("version", false, "Just print version and exit")
-	argBitrate := flag.Float64(
-		"bitrate", 100, "Max download birate in kbit/s for single client",
+	pflag.CommandLine.SortFlags = false
+	argHelp := pflag.BoolP("help", "h", false, "Just print help message and exit")
+	argVersion := pflag.Bool("version", false, "Just print version and exit")
+	argBitrate := pflag.Float64P(
+		"client-bitrate", "b", 100, "Max download birate in kbit/s for single client",
 	)
-	argReqsPerSec := flag.Float64(
-		"rps", 1, "Max requests per second for single client",
+	argReqsPerSec := pflag.Float64P(
+		"total-rps", "r", 1, "Max requests per second for all clients in total",
 	)
-	argClients := flag.Int(
-		"clients", 1, "Number of parallel download clients",
+	argClients := pflag.Int64P(
+		"clients-num", "n", 1, "Number of parallel download clients",
 	)
-	argInterval := flag.Float64("interval", 1, "Report interval in seconds")
-	argChunksPerInterval := flag.Float64(
+	argInterval := pflag.Float64P(
+		"interval", "i", 1, "Report interval in seconds",
+	)
+	argChunksPerInterval := pflag.Float64(
 		"min-chunks-per-interval",
 		4,
 		"Minimum number of download chunks per report interval",
 	)
-	argURL := flag.String("url", "", "HTTP URL to download (REQUIRED)")
-	flag.Parse()
+	argURL := pflag.StringP(
+		"url", "u", "", "HTTP URL to download (REQUIRED)",
+	)
+	pflag.Parse()
 	if *argHelp {
-		flag.Usage()
+		pflag.Usage()
 		return
 	}
 	if *argVersion {
@@ -113,11 +120,13 @@ func main() {
 	url := *argURL
 	if url == "" {
 		fmt.Println("No HTTP URL specified")
-		flag.Usage()
+		pflag.Usage()
 		os.Exit(1)
 	}
-	for i := 0; i < clients; i++ {
-		go downloadLoop(url, chunkSize, byteRate, reqsPerSec)
+	reqsRateBucket := ratelimit.NewBucketWithRate(reqsPerSec, clients)
+	reqsRateBucket.TakeAvailable(clients)
+	for i := int64(0); i < clients; i++ {
+		go downloadLoop(url, chunkSize, byteRate, reqsRateBucket)
 	}
 	fmt.Printf("Time    \tDownload speed (bit/s)\tRequests per second\n")
 	var prevByteCnt, prevReqsCnt uint64
