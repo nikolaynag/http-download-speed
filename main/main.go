@@ -14,7 +14,8 @@ import (
 )
 
 const (
-	maxChunkSize = 8192
+	maxChunkSize      = 8192
+	chunksPerInterval = 20
 )
 
 var (
@@ -47,16 +48,24 @@ func downloadLoop(
 		},
 	}
 	buffer := make([]byte, chunkSize)
-	byteRateBucket := ratelimit.NewBucketWithRate(byteRate, chunkSize)
-	byteRateBucket.TakeAvailable(chunkSize)
+	var byteRateBucket *ratelimit.Bucket
+	if byteRate > 0 {
+		byteRateBucket = ratelimit.NewBucketWithRate(byteRate, chunkSize)
+		byteRateBucket.TakeAvailable(chunkSize)
+	}
 	for {
-		reqsRateBucket.Wait(1)
+		if reqsRateBucket != nil {
+			reqsRateBucket.Wait(1)
+		}
 		resp, err := httpClient.Get(url)
 		if err != nil {
 			panic(err)
 		}
 		atomic.AddUint64(&reqsCounter, 1)
-		rateLimitedBody := ratelimit.Reader(resp.Body, byteRateBucket)
+		rateLimitedBody := io.Reader(resp.Body)
+		if byteRateBucket != nil {
+			rateLimitedBody = ratelimit.Reader(resp.Body, byteRateBucket)
+		}
 		for {
 			bytesCnt, err := rateLimitedBody.Read(buffer)
 			if err == io.EOF {
@@ -76,22 +85,25 @@ func main() {
 	pflag.CommandLine.SortFlags = false
 	argHelp := pflag.BoolP("help", "h", false, "Just print help message and exit")
 	argVersion := pflag.Bool("version", false, "Just print version and exit")
+	argClients := pflag.Int64P(
+		"clients-num", "n", 1,
+		"Number of clients to make request in parallel",
+	)
 	argBitrate := pflag.Float64P(
-		"client-bitrate", "b", 100, "Max download birate in kbit/s for single client",
+		"client-bitrate", "b", 100e3,
+		"Per-client download speed limit in bit/s (zero means no limit)",
 	)
 	argReqsPerSec := pflag.Float64P(
-		"total-rps", "r", 1, "Max requests per second for all clients in total",
-	)
-	argClients := pflag.Int64P(
-		"clients-num", "n", 1, "Number of parallel download clients",
+		"total-rps", "r", 1e3,
+		"Total requests per second limit for all clients (zero means no limit)",
 	)
 	argInterval := pflag.Float64P(
-		"interval", "i", 1, "Report interval in seconds",
+		"interval", "i", 1,
+		"Report interval in seconds",
 	)
-	argChunksPerInterval := pflag.Float64(
-		"min-chunks-per-interval",
-		4,
-		"Minimum number of download chunks per report interval",
+	argCount := pflag.Uint64P(
+		"count", "c", 0,
+		"Stop after given number of intervals (use zero to run non-stop)",
 	)
 	argURL := pflag.StringP(
 		"url", "u", "", "HTTP URL to download (REQUIRED)",
@@ -107,9 +119,13 @@ func main() {
 	}
 	clients := *argClients
 	interval := *argInterval
-	byteRate := *argBitrate * 1e3 / 8.0
+	byteRate := *argBitrate / 8.0
 	reqsPerSec := *argReqsPerSec
-	chunkSize := int64(byteRate * interval / (*argChunksPerInterval))
+	maxCount := *argCount
+	chunkSize := int64(byteRate * interval / chunksPerInterval)
+	if byteRate == 0 {
+		chunkSize = maxChunkSize
+	}
 	if chunkSize <= 10 {
 		fmt.Printf("Number of bytes per interval is too low, bitrate may be wrong")
 		chunkSize = 10
@@ -123,13 +139,16 @@ func main() {
 		pflag.Usage()
 		os.Exit(1)
 	}
-	reqsRateBucket := ratelimit.NewBucketWithRate(reqsPerSec, clients)
-	reqsRateBucket.TakeAvailable(clients)
+	var reqsRateBucket *ratelimit.Bucket
+	if reqsPerSec > 0 {
+		reqsRateBucket = ratelimit.NewBucketWithRate(reqsPerSec, clients)
+		reqsRateBucket.TakeAvailable(clients)
+	}
 	for i := int64(0); i < clients; i++ {
 		go downloadLoop(url, chunkSize, byteRate, reqsRateBucket)
 	}
 	fmt.Printf("Time    \tDownload speed (bit/s)\tRequests per second\n")
-	var prevByteCnt, prevReqsCnt uint64
+	var prevByteCnt, prevReqsCnt, counter uint64
 	prevTime := time.Now()
 	for {
 		time.Sleep(time.Duration(interval*1e9) * time.Nanosecond)
@@ -148,5 +167,9 @@ func main() {
 		prevTime = nowTime
 		prevByteCnt = currByteCnt
 		prevReqsCnt = currReqsCnt
+		counter++
+		if maxCount > 0 && counter >= maxCount {
+			break
+		}
 	}
 }

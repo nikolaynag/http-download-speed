@@ -31,24 +31,24 @@ make run
 ```
 Usage example:
 ```
-build/bin$ ./http-download-speed --clients 4 --bitrate 10 --url http://google.com
+build/bin$ ./http-download-speed --clients-num 4 --client-bitrate 10e3 --count 4 --url http://google.com
 Time    	Download speed (bit/s)	Requests per second
-11:12:12	   39.907K	    3.997
-11:12:13	   39.895K	    0.000
-11:12:14	   39.900K	    0.000
-11:12:15	   39.898K	    0.000
-11:12:16	   39.895K	    0.000
-^C
+22:44:25	   25.787K	    3.999
+22:44:26	   40.163K	    0.000
+22:44:27	   40.168K	    0.000
+22:44:28	   40.661K	    0.000
 $
 ```
+
 Take a look at possible arguments with `--help`:
 ```
-Usage of ./http-download-speed:
-      --help                            Just print help message and exit
-      --version                         Just print version and exit
-      --bitrate float                   Max download birate in kbit/s for single goroutine (default 100)
-      --clients int                     Number of parallel download clients (default 1)
-      --interval float                  Report interval in seconds (default 1)
-      --min-chunks-per-interval float   Minimum number of download chunks per report interval (default 4)
-      --url string                      HTTP URL to download (REQUIRED)
+Usage of ./build/bin/http-download-speed:
+  -h, --help                   Just print help message and exit
+      --version                Just print version and exit
+  -n, --clients-num int        Number of clients to make request in parallel (default 1)
+  -b, --client-bitrate float   Per-client download speed limit in bit/s (zero means no limit) (default 100)
+  -r, --total-rps float        Total requests per second limit for all clients (zero means no limit) (default 10)
+  -i, --interval float         Report interval in seconds (default 1)
+  -c, --count uint             Stop after given number of intervals (use zero to run non-stop)
+  -u, --url string             HTTP URL to download (REQUIRED)
 ```

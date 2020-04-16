@@ -20,4 +20,4 @@ clean:
 	rm -rf build/
 
 run: binary
-	$(BINARY) --clients 4 --bitrate 10 --url http://google.com
+	$(BINARY) --clients-num 4 --client-bitrate 10e3 --count 4 --url http://google.com
