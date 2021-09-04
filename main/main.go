@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -39,6 +40,7 @@ func downloadLoop(
 	chunkSize int64,
 	byteRate float64,
 	reqsRateBucket *ratelimit.Bucket,
+	headers http.Header,
 ) {
 	httpClient := http.Client{
 		Transport: &http.Transport{
@@ -57,7 +59,12 @@ func downloadLoop(
 		if reqsRateBucket != nil {
 			reqsRateBucket.Wait(1)
 		}
-		resp, err := httpClient.Get(url)
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			panic(err)
+		}
+		req.Header = headers
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			panic(err)
 		}
@@ -79,6 +86,17 @@ func downloadLoop(
 			atomic.AddUint64(&byteCounter, uint64(bytesCnt))
 		}
 	}
+}
+
+func parseHeaderDefinition(s string) (name, value string, err error) {
+	values := strings.SplitN(s, ":", 2)
+	if len(values) < 2 {
+		err = fmt.Errorf("expected `<name>: <value>`, but got '%s'", s)
+		return
+	}
+	name = strings.TrimSpace(values[0])
+	value = strings.TrimSpace(values[1])
+	return
 }
 
 func main() {
@@ -104,6 +122,9 @@ func main() {
 	argCount := pflag.Uint64P(
 		"count", "c", 0,
 		"Stop after given number of intervals (use zero to run non-stop)",
+	)
+	headersFlag := pflag.StringSliceP(
+		"header", "H", nil, "HTTP Header in `'Name: Value'` format",
 	)
 	argURL := pflag.StringP(
 		"url", "u", "", "HTTP URL to download (REQUIRED)",
@@ -139,13 +160,24 @@ func main() {
 		pflag.Usage()
 		os.Exit(1)
 	}
+	headers := http.Header{}
+	for _, h := range *headersFlag {
+		name, value, err := parseHeaderDefinition(h)
+		if err != nil {
+			fmt.Printf("Wrong `--header` param: %v\n\n", err)
+			pflag.Usage()
+			os.Exit(1)
+		}
+		headers.Add(name, value)
+	}
 	var reqsRateBucket *ratelimit.Bucket
 	if reqsPerSec > 0 {
 		reqsRateBucket = ratelimit.NewBucketWithRate(reqsPerSec, clients)
 		reqsRateBucket.TakeAvailable(clients)
 	}
+
 	for i := int64(0); i < clients; i++ {
-		go downloadLoop(url, chunkSize, byteRate, reqsRateBucket)
+		go downloadLoop(url, chunkSize, byteRate, reqsRateBucket, headers)
 	}
 	fmt.Printf("Time    \tDownload speed (bit/s)\tRequests per second\n")
 	var prevByteCnt, prevReqsCnt, counter uint64
